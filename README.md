@@ -73,16 +73,17 @@ v0.1不处理：
 
 ## 生产验证
 
-核心逻辑已在 W3 Total Cache 2.10.3、Polylang多域名和独立后台 Host的真实
-WordPress生产环境中验证：
+v0.1公共实现已在 WordPress、Polylang多域名、W3 Total Cache 2.10.3、
+Redis和独立后台 Host的真实生产环境中验证：
 
 - 更新英文文章后，英文首页 Page Cache文件在首次 Origin请求前已经被删除，
   随后由 Origin请求重新生成；
-- 同一次 Update中，共享 `posts` group version从 `803`推进到 `805`。
+- 公共 v0.1部署后的一次真实后台 Update中，共享 `posts` group version从
+  `813`推进到 `815`。
 
 这证明语言首页 Page Cache补偿和跨 Host `posts` Object Cache补偿均实际生效。
 该结论只覆盖普通文章发布/更新场景，不代表所有缓存对象均已验证。
 
 ## 许可证
 
-GPL-2.0-or-later。详见 [LICENSE](LICENSE)。
+MIT。详见 [LICENSE](LICENSE)。

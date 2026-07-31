@@ -39,6 +39,16 @@ W3 Total Cache 2.10.3已经确认存在两个 multi-Host原生缺口：
 Origin GET重新生成；共享 version从 `803`推进到 `805`。这证明至少发生了有效
 group flush。当前不继续调查为什么一次 Update观察到增量为2。
 
+公共 v0.1随后替换生产参考版本并通过一次独立的真实后台 Update验证：
+
+- 共享 `posts` group version从 `813`推进到 `815`；
+- Update后、首次 Origin GET前，en首页 Page Cache文件不存在；
+- 首次 en Origin GET返回 HTTP 200、首篇为测试英文文章，并重新生成缓存；
+- www Origin返回 HTTP 200，admin返回正常登录重定向。
+
+因此，当前公共 v0.1本身已经完成语言首页 Page Cache和跨 Host `posts`
+Object Cache两项生产运行时验证。
+
 ## 3. 尚未验证功能
 
 以下对象没有足够的生产故障证据或对应运行时验证，不进入 v0.1功能范围：
@@ -186,7 +196,7 @@ v0.1明确不负责：
 
 v0.1最小公共实现已经从 `production-reference`单独提取到
 `src/polylang-w3tc-cache-compat.php`，没有 `options`逻辑或生产站点硬编码。
-README已经改为安装、要求、范围和验证说明，并加入 GPL-2.0-or-later许可证。
+README已经改为安装、要求、范围和验证说明，并加入 MIT许可证。
 
 首次 push前只需确认：
 
@@ -241,17 +251,15 @@ production-reference/
 
 ## 11. 许可证建议
 
-推荐 **GPL-2.0-or-later**。
+项目采用 **MIT License**。
 
 理由：
 
-- 与 WordPress插件生态和 WordPress本身的授权预期一致；
-- 允许使用、修改和再分发；
-- SPDX标识清晰，适合在 PHP文件头和 GitHub仓库中声明；
-- 比自定义许可证更容易被 WordPress用户和贡献者理解。
+- 许可证简短清晰；
+- 允许使用、修改、再分发和商业使用；
+- 适合作为小型独立兼容 MU Plugin的公共许可证。
 
-仓库现已加入标准 GPL v2正文的 `LICENSE`，插件头声明
-`GPL-2.0-or-later`。
+仓库现已加入标准 MIT正文的 `LICENSE`，插件头声明 `MIT`。
 
 ## 12. 当前发布判断
 
