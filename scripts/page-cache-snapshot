@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+#
+# Read-only W3 Total Cache Disk Enhanced Page Cache snapshot utility.
+#
+# It never writes below PAGE_CACHE_ROOT and never invokes WordPress, WP-CLI,
+# W3TC, Redis, or a CDN API. The only writes are its own text snapshots.
+
+set -euo pipefail
+
+PAGE_CACHE_ROOT="${PAGE_CACHE_ROOT:-/data/wwwroot/www.shuijingwanwq.com/wp-content/cache/page_enhanced}"
+SNAPSHOT_DIR="${SNAPSHOT_DIR:-/var/log/w3tc-page-cache-snapshots}"
+PAGE_CACHE_HOSTS="${PAGE_CACHE_HOSTS:-www.shuijingwanwq.com en.shuijingwanwq.com}"
+
+usage() {
+	cat <<'EOF'
+Usage:
+  page-cache-snapshot [label]
+  page-cache-snapshot diff <before-snapshot> <after-snapshot>
+
+Environment overrides for read-only fixture testing:
+  PAGE_CACHE_ROOT, SNAPSHOT_DIR, PAGE_CACHE_HOSTS
+EOF
+}
+
+fail() {
+	echo "ERROR: $*" >&2
+	exit 1
+}
+
+safe_label() {
+	local label="$1"
+	label="$(printf '%s' "$label" | tr -cs '[:alnum:]._-' '_')"
+	label="${label#_}"
+	label="${label%_}"
+	printf '%s' "${label:-snapshot}"
+}
+
+format_epoch() {
+	date -d "@$1" '+%F %T %Z'
+}
+
+format_age() {
+	local seconds="$1"
+	printf '%dd %02dh' "$(( seconds / 86400 ))" "$(( seconds % 86400 / 3600 ))"
+}
+
+snapshot_host() {
+	local host="$1"
+	local host_dir="$PAGE_CACHE_ROOT/$host"
+	local now_epoch="$2"
+	local active_count=0 old_count=0
+	local under_1d=0 one_to_2d=0 two_to_3d=0 three_to_4d=0 over_4d=0
+	local oldest_epoch='' oldest_path='' newest_epoch='' newest_path=''
+	local file_epoch file_path age_seconds
+
+	echo "HOST_BEGIN=$host"
+	echo "HOST_DIRECTORY=$host_dir"
+
+	if [[ ! -d "$host_dir" ]]; then
+		echo 'HOST_EXISTS=0'
+		echo 'ACTIVE_HTML_COUNT=0'
+		echo 'OLD_COUNT=0'
+		echo 'HOST_END='
+		return
+	fi
+
+	echo 'HOST_EXISTS=1'
+
+	# Production uses _index_slash_ssl.html for the uncompressed HTML variant.
+	# Match every current _index*.html variant but never count *_old as active.
+	while IFS='|' read -r file_epoch file_path; do
+		file_epoch="${file_epoch%%.*}"
+		(( active_count += 1 ))
+
+		if [[ -z "$oldest_epoch" || "$file_epoch" -lt "$oldest_epoch" ]]; then
+			oldest_epoch="$file_epoch"
+			oldest_path="$file_path"
+		fi
+		if [[ -z "$newest_epoch" || "$file_epoch" -gt "$newest_epoch" ]]; then
+			newest_epoch="$file_epoch"
+			newest_path="$file_path"
+		fi
+
+		age_seconds=$(( now_epoch - file_epoch ))
+		if (( age_seconds < 86400 )); then
+			(( under_1d += 1 ))
+		elif (( age_seconds < 172800 )); then
+			(( one_to_2d += 1 ))
+		elif (( age_seconds < 259200 )); then
+			(( two_to_3d += 1 ))
+		elif (( age_seconds < 345600 )); then
+			(( three_to_4d += 1 ))
+		else
+			(( over_4d += 1 ))
+		fi
+	done < <(find "$host_dir" -type f -name '*_index*.html' ! -name '*_old' -printf '%T@|%p\n' 2>/dev/null)
+
+	old_count="$(find "$host_dir" -type f -name '*_old' -printf '.' 2>/dev/null | wc -c)"
+
+	echo "ACTIVE_HTML_COUNT=$active_count"
+	echo "AGE_LT_1D=$under_1d"
+	echo "AGE_1_TO_2D=$one_to_2d"
+	echo "AGE_2_TO_3D=$two_to_3d"
+	echo "AGE_3_TO_4D=$three_to_4d"
+	echo "AGE_GE_4D=$over_4d"
+	echo "OLD_COUNT=$old_count"
+
+	if [[ -n "$oldest_epoch" ]]; then
+		echo "OLDEST_EPOCH=$oldest_epoch"
+		echo "OLDEST_MTIME=$(format_epoch "$oldest_epoch")"
+		echo "OLDEST_AGE=$(format_age "$(( now_epoch - oldest_epoch ))")"
+		echo "OLDEST_PATH=$oldest_path"
+		echo "NEWEST_EPOCH=$newest_epoch"
+		echo "NEWEST_MTIME=$(format_epoch "$newest_epoch")"
+		echo "NEWEST_PATH=$newest_path"
+	else
+		echo 'OLDEST_EPOCH='
+		echo 'OLDEST_MTIME='
+		echo 'OLDEST_AGE='
+		echo 'OLDEST_PATH='
+		echo 'NEWEST_EPOCH='
+		echo 'NEWEST_MTIME='
+		echo 'NEWEST_PATH='
+	fi
+
+	for minutes in 5 15 60; do
+		local cutoff=$(( now_epoch - minutes * 60 ))
+		local recent_old
+		recent_old="$(find "$host_dir" -type f -name '*_old' -newerct "@$cutoff" -printf '.' 2>/dev/null | wc -c)"
+		echo "OLD_CTIME_${minutes}M=$recent_old"
+	done
+
+	echo 'RECENT_OLD_BEGIN='
+	find "$host_dir" -type f -name '*_old' -printf '%C@|%CY-%Cm-%Cd %CH:%CM:%CS|%p\n' 2>/dev/null \
+		| sort -t '|' -k1,1nr \
+		| head -20 \
+		| while IFS='|' read -r _ ctime old_path; do
+			echo "OLD_CTIME=$ctime|$old_path"
+		done || true
+	echo 'RECENT_OLD_END='
+	echo 'HOST_END='
+}
+
+snapshot() {
+	local label="${1:-snapshot}"
+	local safe timestamp snapshot_path now_epoch
+
+	[[ -d "$PAGE_CACHE_ROOT" ]] || fail "Page Cache root does not exist: $PAGE_CACHE_ROOT"
+	mkdir -p "$SNAPSHOT_DIR"
+	[[ -d "$SNAPSHOT_DIR" ]] || fail "Cannot create snapshot directory: $SNAPSHOT_DIR"
+
+	safe="$(safe_label "$label")"
+	timestamp="$(date '+%Y%m%d-%H%M%S')"
+	snapshot_path="$SNAPSHOT_DIR/${timestamp}-${safe}.txt"
+	now_epoch="$(date +%s)"
+
+	{
+		echo 'W3TC_PAGE_CACHE_SNAPSHOT=1'
+		echo "SNAPSHOT_TIME=$(format_epoch "$now_epoch")"
+		echo "SNAPSHOT_EPOCH=$now_epoch"
+		echo "LABEL=$safe"
+		echo "PAGE_CACHE_ROOT=$PAGE_CACHE_ROOT"
+		echo 'READ_ONLY_CACHE_INSPECTION=yes'
+		for host in $PAGE_CACHE_HOSTS; do
+			snapshot_host "$host" "$now_epoch"
+		done
+		echo 'FULL_FLUSH_RISK=No automatic verdict: compare this snapshot with a before/after pair.'
+	} | tee "$snapshot_path"
+
+	echo "SNAPSHOT_FILE=$snapshot_path"
+}
+
+resolve_snapshot_path() {
+	local candidate="$1"
+	if [[ -f "$candidate" ]]; then
+		printf '%s' "$candidate"
+	elif [[ -f "$SNAPSHOT_DIR/$candidate" ]]; then
+		printf '%s' "$SNAPSHOT_DIR/$candidate"
+	else
+		fail "Snapshot not found: $candidate"
+	fi
+}
+
+snapshot_value() {
+	local snapshot="$1" host="$2" key="$3"
+	awk -F= -v wanted_host="$host" -v wanted_key="$key" '
+		$1 == "HOST_BEGIN" { in_host = ($2 == wanted_host); next }
+		in_host && $1 == wanted_key { print substr($0, length(wanted_key) + 2); exit }
+	' "$snapshot"
+}
+
+diff_snapshots() {
+	local before after host before_active after_active before_old after_old before_epoch after_epoch
+	[[ $# -eq 2 ]] || fail 'diff requires a before and after snapshot'
+	before="$(resolve_snapshot_path "$1")"
+	after="$(resolve_snapshot_path "$2")"
+
+	echo "DIFF_BEFORE=$before"
+	echo "DIFF_AFTER=$after"
+	for host in $PAGE_CACHE_HOSTS; do
+		before_active="$(snapshot_value "$before" "$host" 'ACTIVE_HTML_COUNT')"
+		after_active="$(snapshot_value "$after" "$host" 'ACTIVE_HTML_COUNT')"
+		before_old="$(snapshot_value "$before" "$host" 'OLD_COUNT')"
+		after_old="$(snapshot_value "$after" "$host" 'OLD_COUNT')"
+		before_epoch="$(snapshot_value "$before" "$host" 'OLDEST_EPOCH')"
+		after_epoch="$(snapshot_value "$after" "$host" 'OLDEST_EPOCH')"
+
+		echo "HOST=$host"
+		echo "ACTIVE_HTML=${before_active:-0}->${after_active:-0}"
+		echo "OLD_COUNT=${before_old:-0}->${after_old:-0}"
+		echo "OLDEST_EPOCH=${before_epoch:-none}->${after_epoch:-none}"
+	done
+}
+
+case "${1:-snapshot}" in
+	-h|--help|help)
+		usage
+		;;
+	diff)
+		shift
+		diff_snapshots "$@"
+		;;
+	*)
+		snapshot "${1:-snapshot}"
+		;;
+esac
