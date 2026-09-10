@@ -130,7 +130,7 @@ function polylang_w3tc_cache_compat_is_eventually_consistent_term_taxonomy( $tax
 		return false;
 	}
 
-	$taxonomies = array( 'category', 'post_tag' );
+	$taxonomies = array( 'category', 'post_tag', 'series' );
 
 	global $polylang;
 

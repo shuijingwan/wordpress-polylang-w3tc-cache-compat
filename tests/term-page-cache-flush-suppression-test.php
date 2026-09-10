@@ -78,21 +78,22 @@ polylang_w3tc_cache_compat_test_assert(
 	'Replacement callbacks retain Core taxonomy arguments on both hooks.'
 );
 
-foreach ( array( 'category', 'post_tag', 'term_translations' ) as $taxonomy ) {
+foreach ( array( 'category', 'post_tag', 'series', 'term_translations' ) as $taxonomy ) {
 	polylang_w3tc_cache_compat_flush_posts_for_term( 1, 1, $taxonomy );
 }
 
 polylang_w3tc_cache_compat_test_assert(
 	0 === $test_flush_count,
-	'Edited category, post_tag, and Polylang translation taxonomy do not flush all pages.'
+	'Edited category, post_tag, series, and Polylang translation taxonomy do not flush all pages.'
 );
 
 polylang_w3tc_cache_compat_flush_posts_for_term( 1, 1, 'category', (object) array(), array() );
 polylang_w3tc_cache_compat_flush_posts_for_term( 1, 1, 'post_tag', (object) array(), array() );
+polylang_w3tc_cache_compat_flush_posts_for_term( 1, 1, 'series', (object) array(), array() );
 
 polylang_w3tc_cache_compat_test_assert(
 	0 === $test_flush_count,
-	'Deleted category and post_tag do not flush all pages.'
+	'Deleted category, post_tag, and series do not flush all pages.'
 );
 
 polylang_w3tc_cache_compat_flush_posts_for_term( 1, 1, 'custom_taxonomy' );
